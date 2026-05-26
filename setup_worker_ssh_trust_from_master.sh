@@ -3,9 +3,10 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOSTS_FILE="${HOSTS_FILE:-${SCRIPT_DIR}/hosts.txt}"
-if [[ ! -f "${HOSTS_FILE}" && -f "${SCRIPT_DIR}/hosts.example" ]]; then
-  HOSTS_FILE="${SCRIPT_DIR}/hosts.example"
-fi
+HOST_SOURCE="${HOST_SOURCE:-auto}"
+ETC_HOSTS_FILE="${ETC_HOSTS_FILE:-/etc/hosts}"
+CLUSTER_HOST_PATTERN="${CLUSTER_HOST_PATTERN:-^x2-[1-4]$}"
+FALLBACK_HOSTS="${FALLBACK_HOSTS:-x2-1 x2-2 x2-3 x2-4}"
 
 SSH_USER="${SSH_USER:-ubuntu}"
 SSH_PORT="${SSH_PORT:-22}"
@@ -31,7 +32,11 @@ Usage:
 Run this on x2-1 only, after x2-1 can already SSH to x2-2/x2-3/x2-4.
 
 Environment:
-  HOSTS_FILE       Default: ./hosts.txt, fallback: ./hosts.example
+  HOST_SOURCE      auto, file, etc_hosts, or fallback. Default: auto
+  HOSTS_FILE       Default: ./hosts.txt
+  ETC_HOSTS_FILE   Default: /etc/hosts
+  CLUSTER_HOST_PATTERN Default: ^x2-[1-4]$
+  FALLBACK_HOSTS   Default: x2-1 x2-2 x2-3 x2-4
   SSH_USER         Default: ubuntu
   SSH_PORT         Default: 22
   SSH_KEY          Master key used by x2-1 to login workers. Default: ~/.ssh/id_rsa
@@ -46,13 +51,58 @@ EOF
 }
 
 read_hosts() {
-  [[ -f "${HOSTS_FILE}" ]] || die "missing hosts file: ${HOSTS_FILE}"
-  mapfile -t ALL_HOSTS < <(awk '
-    /^[[:space:]]*#/ { next }
-    /^[[:space:]]*$/ { next }
-    { print $1 }
-  ' "${HOSTS_FILE}")
-  [[ "${#ALL_HOSTS[@]}" -gt 1 ]] || die "need at least 2 hosts in ${HOSTS_FILE}"
+  local source="${HOST_SOURCE}"
+  if [[ "${source}" == "auto" ]]; then
+    if [[ -f "${HOSTS_FILE}" ]]; then
+      source="file"
+    elif [[ -f "${ETC_HOSTS_FILE}" ]] && awk -v pat="${CLUSTER_HOST_PATTERN}" '
+      /^[[:space:]]*#/ { next }
+      {
+        for (i = 2; i <= NF; i++) {
+          if ($i ~ pat) found = 1
+        }
+      }
+      END { exit found ? 0 : 1 }
+    ' "${ETC_HOSTS_FILE}"; then
+      source="etc_hosts"
+    elif [[ -f "${SCRIPT_DIR}/hosts.example" ]]; then
+      HOSTS_FILE="${SCRIPT_DIR}/hosts.example"
+      source="file"
+    else
+      source="fallback"
+    fi
+  fi
+
+  case "${source}" in
+    file)
+      [[ -f "${HOSTS_FILE}" ]] || die "missing hosts file: ${HOSTS_FILE}"
+      mapfile -t ALL_HOSTS < <(awk '
+        /^[[:space:]]*#/ { next }
+        /^[[:space:]]*$/ { next }
+        { print $1 }
+      ' "${HOSTS_FILE}")
+      ;;
+    etc_hosts)
+      [[ -f "${ETC_HOSTS_FILE}" ]] || die "missing /etc/hosts file: ${ETC_HOSTS_FILE}"
+      mapfile -t ALL_HOSTS < <(awk -v pat="${CLUSTER_HOST_PATTERN}" '
+        /^[[:space:]]*#/ { next }
+        {
+          for (i = 2; i <= NF; i++) {
+            if ($i ~ pat) print $i
+          }
+        }
+      ' "${ETC_HOSTS_FILE}" | sort -V | awk '!seen[$0]++')
+      ;;
+    fallback)
+      read -r -a ALL_HOSTS <<<"${FALLBACK_HOSTS}"
+      ;;
+    *)
+      die "HOST_SOURCE must be auto, file, etc_hosts, or fallback; got ${HOST_SOURCE}"
+      ;;
+  esac
+
+  [[ "${#ALL_HOSTS[@]}" -gt 1 ]] || die "need at least 2 hosts; source=${source}"
+  HOST_SOURCE_RESOLVED="${source}"
 
   if [[ "${SKIP_FIRST_HOST}" == "1" ]]; then
     WORKER_HOSTS=("${ALL_HOSTS[@]:1}")
@@ -131,7 +181,13 @@ main() {
   chmod 600 "${SSH_KEY}" || true
 
   read_hosts
-  log "hosts file: ${HOSTS_FILE}"
+  log "host source: ${HOST_SOURCE_RESOLVED}"
+  if [[ "${HOST_SOURCE_RESOLVED}" == "file" ]]; then
+    log "hosts file: ${HOSTS_FILE}"
+  elif [[ "${HOST_SOURCE_RESOLVED}" == "etc_hosts" ]]; then
+    log "etc hosts file: ${ETC_HOSTS_FILE}"
+  fi
+  log "all hosts: ${ALL_HOSTS[*]}"
   log "worker hosts: ${WORKER_HOSTS[*]}"
 
   declare -A PUBKEYS
