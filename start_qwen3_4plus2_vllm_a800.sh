@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
+mkdir -p logs vllm-cache
+
+TS="${TS:-$(date +%Y%m%d_%H%M%S)}"
+START_LOG="${START_LOG:-${SCRIPT_DIR}/logs/qwen3_4plus2_start_${TS}.log}"
+
+export CACHE_DIR="${CACHE_DIR:-${SCRIPT_DIR}/vllm-cache}"
+export REASONING_PARSER="${REASONING_PARSER:-deepseek_r1}"
+export ENABLE_REASONING_FLAG="${ENABLE_REASONING_FLAG:-0}"
+
+export LARGE_MODEL_DIR_NAME="${LARGE_MODEL_DIR_NAME:-Qwen3-235B-A22B-Thinking-2507-FP8}"
+export LARGE_GPUS="${LARGE_GPUS:-0,1,2,3}"
+export LARGE_TP_SIZE="${LARGE_TP_SIZE:-4}"
+export LARGE_PP_SIZE="${LARGE_PP_SIZE:-1}"
+export LARGE_MAX_MODEL_LEN="${LARGE_MAX_MODEL_LEN:-65536}"
+export LARGE_MAX_NUM_SEQS="${LARGE_MAX_NUM_SEQS:-1}"
+export LARGE_GPU_MEMORY_UTILIZATION="${LARGE_GPU_MEMORY_UTILIZATION:-0.88}"
+
+export SMALL_MODEL_DIR_NAME="${SMALL_MODEL_DIR_NAME:-Qwen3-30B-A3B-Thinking-2507}"
+export SMALL_GPUS="${SMALL_GPUS:-4,5}"
+export SMALL_TP_SIZE="${SMALL_TP_SIZE:-2}"
+export SMALL_PP_SIZE="${SMALL_PP_SIZE:-1}"
+export SMALL_MAX_MODEL_LEN="${SMALL_MAX_MODEL_LEN:-32768}"
+export SMALL_MAX_NUM_SEQS="${SMALL_MAX_NUM_SEQS:-4}"
+export SMALL_GPU_MEMORY_UTILIZATION="${SMALL_GPU_MEMORY_UTILIZATION:-0.88}"
+
+export LARGE_CONTAINER_NAME="${LARGE_CONTAINER_NAME:-qwen3-large-vllm}"
+export SMALL_CONTAINER_NAME="${SMALL_CONTAINER_NAME:-qwen3-30b-vllm}"
+export LARGE_PORT="${LARGE_PORT:-8000}"
+export SMALL_PORT="${SMALL_PORT:-8001}"
+
+echo "start log: ${START_LOG}"
+echo "large: ${LARGE_MODEL_DIR_NAME}, GPUs=${LARGE_GPUS}, TP=${LARGE_TP_SIZE}, PP=${LARGE_PP_SIZE}, port=${LARGE_PORT}"
+echo "small: ${SMALL_MODEL_DIR_NAME}, GPUs=${SMALL_GPUS}, TP=${SMALL_TP_SIZE}, PP=${SMALL_PP_SIZE}, port=${SMALL_PORT}"
+
+bash "${SCRIPT_DIR}/start_qwen3_dual_vllm_a800.sh" 2>&1 | tee -a "${START_LOG}"
